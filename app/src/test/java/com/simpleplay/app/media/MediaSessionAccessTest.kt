@@ -43,4 +43,45 @@ class MediaSessionAccessTest {
         assertEquals(RestoreTransport.PAUSE, restoreTransportFor(PlaybackState.STATE_PAUSED))
         assertEquals(RestoreTransport.STOP, restoreTransportFor(PlaybackState.STATE_STOPPED))
     }
+
+    @Test
+    fun transitionalPlaybackStatesAreActive() {
+        assertEquals(true, isPlaybackActive(PlaybackState.STATE_PLAYING))
+        assertEquals(true, isPlaybackActive(PlaybackState.STATE_BUFFERING))
+        assertEquals(true, isPlaybackActive(PlaybackState.STATE_CONNECTING))
+        assertEquals(false, isPlaybackActive(PlaybackState.STATE_PAUSED))
+        assertEquals(false, isPlaybackActive(PlaybackState.STATE_STOPPED))
+    }
+
+    @Test
+    fun pausedSkipIsRestoredIfPlayerStartsAgain() {
+        assertEquals(
+            true,
+            shouldRestoreAfterSkip(RestoreTransport.PAUSE, PlaybackState.STATE_PLAYING),
+        )
+        assertEquals(
+            false,
+            shouldRestoreAfterSkip(RestoreTransport.PAUSE, PlaybackState.STATE_PAUSED),
+        )
+        assertEquals(
+            false,
+            shouldRestoreAfterSkip(RestoreTransport.PLAY, PlaybackState.STATE_PLAYING),
+        )
+    }
+
+    @Test
+    fun skipGuardKeepsPausedIconDuringTransientPlayback() {
+        assertEquals(
+            false,
+            displayedAsPlaying(PlaybackState.STATE_SKIPPING_TO_NEXT, RestoreTransport.PAUSE),
+        )
+        assertEquals(
+            false,
+            displayedAsPlaying(PlaybackState.STATE_PLAYING, RestoreTransport.PAUSE),
+        )
+        assertEquals(
+            true,
+            displayedAsPlaying(PlaybackState.STATE_PLAYING, null),
+        )
+    }
 }

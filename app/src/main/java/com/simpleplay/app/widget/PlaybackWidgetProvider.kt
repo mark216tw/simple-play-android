@@ -28,25 +28,37 @@ import com.simpleplay.app.media.PlaybackAction
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import androidx.core.graphics.ColorUtils
 
-private enum class WidgetKind { CONTROL_BAR, PLAY_PAUSE }
+internal enum class ControlBarWidth {
+    ONE_CELL,
+    TWO_CELLS,
+    THREE_CELLS,
+    FOUR_OR_MORE_CELLS,
+}
 
-open class PlaybackWidgetProvider : AppWidgetProvider() {
-    private val widgetKind: WidgetKind
-        get() = if (this is PlayPauseWidgetProvider) WidgetKind.PLAY_PAUSE else WidgetKind.CONTROL_BAR
+private const val FOUR_CELL_WIDTH_DP = 250
 
+internal fun controlBarWidthFor(widthDp: Int): ControlBarWidth = when {
+    widthDp >= FOUR_CELL_WIDTH_DP -> ControlBarWidth.FOUR_OR_MORE_CELLS
+    widthDp >= 180 -> ControlBarWidth.THREE_CELLS
+    widthDp >= 110 -> ControlBarWidth.TWO_CELLS
+    else -> ControlBarWidth.ONE_CELL
+}
+
+class PlaybackWidgetProvider : AppWidgetProvider() {
     override fun onUpdate(
         context: Context,
         appWidgetManager: AppWidgetManager,
         appWidgetIds: IntArray,
     ) {
         launchUpdate {
-            updateWidgetsNow(context, appWidgetManager, appWidgetIds, widgetKind)
+            updateWidgetsNow(context, appWidgetManager, appWidgetIds)
         }
     }
 
@@ -57,7 +69,7 @@ open class PlaybackWidgetProvider : AppWidgetProvider() {
         newOptions: Bundle,
     ) {
         launchUpdate {
-            updateWidgetNow(context, appWidgetManager, appWidgetId, widgetKind)
+            updateWidgetNow(context, appWidgetManager, appWidgetId)
         }
     }
 
@@ -66,32 +78,33 @@ open class PlaybackWidgetProvider : AppWidgetProvider() {
         when {
             playbackAction != null -> runPendingUpdate {
                 val preferences = readPreferences(context)
-                MediaSessionAccess.perform(
+                val performed = MediaSessionAccess.perform(
                     context,
                     playbackAction,
                     preferences.selectedMediaPackage,
                     preferences.selectedMediaSessionId,
                 )
                 updateAllWidgetsNow(context)
+                if (performed) schedulePlaybackRefreshes(context.applicationContext)
             }
             intent.action == AppWidgetManager.ACTION_APPWIDGET_UPDATE -> {
                 val ids = intent.getIntArrayExtra(AppWidgetManager.EXTRA_APPWIDGET_IDS) ?: intArrayOf()
                 runPendingUpdate {
-                    updateWidgetsNow(context, AppWidgetManager.getInstance(context), ids, widgetKind)
+                    updateWidgetsNow(context, AppWidgetManager.getInstance(context), ids)
                 }
             }
             intent.action == AppWidgetManager.ACTION_APPWIDGET_OPTIONS_CHANGED -> {
                 val id = intent.getIntExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, AppWidgetManager.INVALID_APPWIDGET_ID)
                 runPendingUpdate {
                     if (id != AppWidgetManager.INVALID_APPWIDGET_ID) {
-                        updateWidgetNow(context, AppWidgetManager.getInstance(context), id, widgetKind)
+                        updateWidgetNow(context, AppWidgetManager.getInstance(context), id)
                     }
                 }
             }
             intent.action == AppWidgetManager.ACTION_APPWIDGET_RESTORED -> {
                 val ids = intent.getIntArrayExtra(AppWidgetManager.EXTRA_APPWIDGET_IDS) ?: intArrayOf()
                 runPendingUpdate {
-                    updateWidgetsNow(context, AppWidgetManager.getInstance(context), ids, widgetKind)
+                    updateWidgetsNow(context, AppWidgetManager.getInstance(context), ids)
                 }
             }
             intent.action == Intent.ACTION_CONFIGURATION_CHANGED -> runPendingUpdate {
@@ -118,8 +131,8 @@ open class PlaybackWidgetProvider : AppWidgetProvider() {
         private const val ACTION_PLAY_PAUSE = "com.simpleplay.app.widget.PLAY_PAUSE"
         private const val ACTION_PREVIOUS = "com.simpleplay.app.widget.PREVIOUS"
         private const val ACTION_NEXT = "com.simpleplay.app.widget.NEXT"
-        private const val COMPACT_WIDTH_DP = 300
         private const val TAG = "PlaybackWidget"
+        private val PLAYBACK_REFRESH_DELAYS_MS = longArrayOf(250L, 1_000L)
         private val updateScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         private val updateMutex = Mutex()
 
@@ -137,21 +150,26 @@ open class PlaybackWidgetProvider : AppWidgetProvider() {
             }
         }
 
+        private fun schedulePlaybackRefreshes(context: Context) {
+            PLAYBACK_REFRESH_DELAYS_MS.forEach { delayMillis ->
+                updateScope.launch {
+                    delay(delayMillis)
+                    try {
+                        updateMutex.withLock { updateAllWidgetsNow(context) }
+                    } catch (error: Exception) {
+                        Log.e(TAG, "Unable to refresh playback widget", error)
+                    }
+                }
+            }
+        }
+
         private suspend fun updateAllWidgetsNow(context: Context) {
             val manager = AppWidgetManager.getInstance(context)
             val controlBar = ComponentName(context, PlaybackWidgetProvider::class.java)
-            val playPause = ComponentName(context, PlayPauseWidgetProvider::class.java)
             updateWidgetsNow(
                 context,
                 manager,
                 manager.getAppWidgetIds(controlBar),
-                WidgetKind.CONTROL_BAR,
-            )
-            updateWidgetsNow(
-                context,
-                manager,
-                manager.getAppWidgetIds(playPause),
-                WidgetKind.PLAY_PAUSE,
             )
         }
 
@@ -159,7 +177,6 @@ open class PlaybackWidgetProvider : AppWidgetProvider() {
             context: Context,
             manager: AppWidgetManager,
             widgetIds: IntArray,
-            kind: WidgetKind,
         ) {
             val preferences = readPreferences(context)
             val session = MediaSessionAccess.chooseSession(
@@ -167,14 +184,13 @@ open class PlaybackWidgetProvider : AppWidgetProvider() {
                 preferences.selectedMediaPackage,
                 preferences.selectedMediaSessionId,
             )
-            widgetIds.forEach { renderWidget(context, manager, it, preferences, session, kind) }
+            widgetIds.forEach { renderWidget(context, manager, it, preferences, session) }
         }
 
         private suspend fun updateWidgetNow(
             context: Context,
             manager: AppWidgetManager,
             widgetId: Int,
-            kind: WidgetKind,
         ) {
             val preferences = readPreferences(context)
             val session = MediaSessionAccess.chooseSession(
@@ -182,7 +198,7 @@ open class PlaybackWidgetProvider : AppWidgetProvider() {
                 preferences.selectedMediaPackage,
                 preferences.selectedMediaSessionId,
             )
-            renderWidget(context, manager, widgetId, preferences, session, kind)
+            renderWidget(context, manager, widgetId, preferences, session)
         }
 
         private fun renderWidget(
@@ -191,20 +207,18 @@ open class PlaybackWidgetProvider : AppWidgetProvider() {
             widgetId: Int,
             preferences: AppPreferences,
             session: MediaSessionInfo?,
-            kind: WidgetKind,
         ) {
             val dark = preferences.widgetIsDark(context)
-            if (kind == WidgetKind.PLAY_PAUSE) {
-                renderPlayPauseWidget(context, manager, widgetId, preferences, session, dark)
-                return
-            }
             val remoteViews = RemoteViews(context.packageName, R.layout.widget_playback)
             val options = manager.getAppWidgetOptions(widgetId)
-            val compact = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH) < COMPACT_WIDTH_DP
+            val width = controlBarWidthFor(
+                options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, FOUR_CELL_WIDTH_DP),
+            )
+            val showMetadata = width == ControlBarWidth.FOUR_OR_MORE_CELLS
 
             applyBackground(remoteViews, R.id.widget_root, preferences, dark)
-            remoteViews.setViewVisibility(R.id.widget_source_icon, if (compact) View.GONE else View.VISIBLE)
-            remoteViews.setViewVisibility(R.id.widget_metadata, if (compact) View.GONE else View.VISIBLE)
+            remoteViews.setViewVisibility(R.id.widget_source_icon, if (showMetadata) View.VISIBLE else View.GONE)
+            remoteViews.setViewVisibility(R.id.widget_metadata, if (showMetadata) View.VISIBLE else View.GONE)
 
             val accent = preferences.widgetAccentColor(dark)
             val themedBackground = preferences.widgetBackgroundStyle == WidgetBackgroundStyle.THEME
@@ -222,53 +236,10 @@ open class PlaybackWidgetProvider : AppWidgetProvider() {
                 standardTint = if (themedBackground) primary else accent,
                 accentTint = if (themedBackground) primary else accent,
                 buttonSize = preferences.widgetButtonSize,
+                width = width,
             )
             remoteViews.setOnClickPendingIntent(R.id.widget_root, openAppIntent(context))
             manager.updateAppWidget(widgetId, remoteViews)
-        }
-
-        private fun renderPlayPauseWidget(
-            context: Context,
-            manager: AppWidgetManager,
-            widgetId: Int,
-            preferences: AppPreferences,
-            session: MediaSessionInfo?,
-            dark: Boolean,
-        ) {
-            val views = RemoteViews(context.packageName, R.layout.widget_play_pause)
-            applyBackground(views, R.id.widget_mini_root, preferences, dark)
-            val accent = preferences.widgetAccentColor(dark)
-            val iconTint = if (preferences.widgetBackgroundStyle == WidgetBackgroundStyle.THEME) {
-                contrastColor(accent)
-            } else {
-                accent
-            }
-            views.setImageViewResource(
-                R.id.widget_mini_play_pause,
-                if (session?.isPlaying == true) {
-                    R.drawable.ic_widget_pause
-                } else {
-                    R.drawable.ic_widget_play
-                },
-            )
-            views.setInt(
-                R.id.widget_mini_play_pause,
-                "setColorFilter",
-                iconTint,
-            )
-            applyButtonSize(
-                views,
-                intArrayOf(R.id.widget_mini_play_pause),
-                preferences.widgetButtonSize,
-            )
-            bindAction(
-                context,
-                views,
-                R.id.widget_mini_play_pause,
-                ACTION_PLAY_PAUSE,
-                session?.supports(PlaybackAction.PLAY_PAUSE) == true,
-            )
-            manager.updateAppWidget(widgetId, views)
         }
 
         private fun bindMetadata(
@@ -306,6 +277,7 @@ open class PlaybackWidgetProvider : AppWidgetProvider() {
             standardTint: Int,
             accentTint: Int,
             buttonSize: WidgetButtonSize,
+            width: ControlBarWidth,
         ) {
             views.setImageViewResource(
                 R.id.widget_play_pause,
@@ -318,6 +290,14 @@ open class PlaybackWidgetProvider : AppWidgetProvider() {
             views.setInt(R.id.widget_previous, "setColorFilter", standardTint)
             views.setInt(R.id.widget_play_pause, "setColorFilter", accentTint)
             views.setInt(R.id.widget_next, "setColorFilter", standardTint)
+            views.setViewVisibility(
+                R.id.widget_previous,
+                if (width >= ControlBarWidth.THREE_CELLS) View.VISIBLE else View.GONE,
+            )
+            views.setViewVisibility(
+                R.id.widget_next,
+                if (width >= ControlBarWidth.TWO_CELLS) View.VISIBLE else View.GONE,
+            )
             applyButtonSize(
                 views,
                 intArrayOf(R.id.widget_previous, R.id.widget_play_pause, R.id.widget_next),
@@ -441,5 +421,3 @@ open class PlaybackWidgetProvider : AppWidgetProvider() {
             }
     }
 }
-
-class PlayPauseWidgetProvider : PlaybackWidgetProvider()

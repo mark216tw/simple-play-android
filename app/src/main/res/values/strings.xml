@@ -4,8 +4,6 @@
     <string name="notification_access_service">簡單播放媒體控制服務</string>
     <string name="widget_name">簡單播放控制列</string>
     <string name="widget_description">控制目前正在播放的媒體</string>
-    <string name="play_pause_widget_name">播放／暫停按鈕</string>
-    <string name="play_pause_widget_description">以單一按鈕播放或暫停目前媒體</string>
     <string name="previous">上一首</string>
     <string name="play_pause">播放或暫停</string>
     <string name="next">下一首</string>

@@ -1,11 +1,13 @@
 package com.simpleplay.app.media
 
+import android.app.Notification
 import android.content.ComponentName
 import android.media.MediaMetadata
 import android.media.session.MediaController
 import android.media.session.MediaSessionManager
 import android.media.session.PlaybackState
 import android.service.notification.NotificationListenerService
+import android.service.notification.StatusBarNotification
 import com.simpleplay.app.widget.PlaybackWidgetProvider
 
 class MediaNotificationListenerService : NotificationListenerService() {
@@ -25,7 +27,16 @@ class MediaNotificationListenerService : NotificationListenerService() {
 
     override fun onListenerDisconnected() {
         stopObserving()
+        updateWidgets()
         super.onListenerDisconnected()
+    }
+
+    override fun onNotificationPosted(sbn: StatusBarNotification?) {
+        if (sbn.isMediaNotification()) updateWidgets()
+    }
+
+    override fun onNotificationRemoved(sbn: StatusBarNotification?) {
+        if (sbn.isMediaNotification()) updateWidgets()
     }
 
     override fun onDestroy() {
@@ -61,4 +72,7 @@ class MediaNotificationListenerService : NotificationListenerService() {
     private fun updateWidgets() {
         PlaybackWidgetProvider.updateAll(this)
     }
+
+    private fun StatusBarNotification?.isMediaNotification(): Boolean =
+        this?.notification?.extras?.containsKey(Notification.EXTRA_MEDIA_SESSION) == true
 }

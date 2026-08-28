@@ -186,6 +186,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 ?: savedPreferences.selectedMediaSessionId)
                 ?.takeIf { selected -> sessions.any { it.sessionId == selected } },
         )
+        PlaybackWidgetProvider.updateAll(app)
     }
 
     private fun clearControllerCallbacks() {

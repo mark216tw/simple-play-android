@@ -89,9 +89,7 @@ app/build/outputs/apk/debug/app-debug.apk
 
 ### 小工具
 
-`PlaybackWidgetProvider` 提供可調整寬度的單列控制器。
-
-`PlayPauseWidgetProvider` 提供固定 `1 x 1` 的播放／暫停按鈕。
+`PlaybackWidgetProvider` 提供可調整寬度的單列控制器，並依 `4 x 1` 至 `1 x 1` 寬度逐步隱藏歌曲資訊、上一首與下一首。
 
 Widget 廣播透過 `goAsync()` 與序列化 coroutine 執行，避免在 BroadcastReceiver 主執行緒同步讀取 DataStore 或查詢 MediaSession。
 

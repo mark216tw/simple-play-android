@@ -9,6 +9,8 @@ import android.media.MediaMetadata
 import android.media.session.MediaController
 import android.media.session.MediaSessionManager
 import android.media.session.PlaybackState
+import android.os.Handler
+import android.os.Looper
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.graphics.createBitmap
 import java.util.concurrent.ConcurrentHashMap
@@ -26,7 +28,7 @@ internal enum class RestoreTransport {
     STOP,
 }
 
-internal fun restoreTransportFor(playbackState: Int): RestoreTransport = when (playbackState) {
+internal fun isPlaybackActive(playbackState: Int): Boolean = when (playbackState) {
     PlaybackState.STATE_PLAYING,
     PlaybackState.STATE_BUFFERING,
     PlaybackState.STATE_CONNECTING,
@@ -34,9 +36,29 @@ internal fun restoreTransportFor(playbackState: Int): RestoreTransport = when (p
     PlaybackState.STATE_REWINDING,
     PlaybackState.STATE_SKIPPING_TO_NEXT,
     PlaybackState.STATE_SKIPPING_TO_PREVIOUS,
-    PlaybackState.STATE_SKIPPING_TO_QUEUE_ITEM -> RestoreTransport.PLAY
-    PlaybackState.STATE_STOPPED -> RestoreTransport.STOP
+    PlaybackState.STATE_SKIPPING_TO_QUEUE_ITEM -> true
+    else -> false
+}
+
+internal fun restoreTransportFor(playbackState: Int): RestoreTransport = when {
+    isPlaybackActive(playbackState) -> RestoreTransport.PLAY
+    playbackState == PlaybackState.STATE_STOPPED -> RestoreTransport.STOP
     else -> RestoreTransport.PAUSE
+}
+
+internal fun shouldRestoreAfterSkip(
+    transport: RestoreTransport,
+    playbackState: Int,
+): Boolean = transport != RestoreTransport.PLAY && isPlaybackActive(playbackState)
+
+internal fun displayedAsPlaying(
+    playbackState: Int,
+    guardedTransport: RestoreTransport?,
+): Boolean = when (guardedTransport) {
+    RestoreTransport.PLAY -> true
+    RestoreTransport.PAUSE,
+    RestoreTransport.STOP -> false
+    null -> isPlaybackActive(playbackState)
 }
 
 data class MediaSessionInfo(
@@ -54,10 +76,11 @@ data class MediaSessionInfo(
     val actions: Long,
 ) {
     fun supports(action: PlaybackAction): Boolean = when (action) {
-        PlaybackAction.PLAY_PAUSE -> {
-            val expected = if (isPlaying) PlaybackState.ACTION_PAUSE else PlaybackState.ACTION_PLAY
-            actions.hasAny(expected or PlaybackState.ACTION_PLAY_PAUSE)
-        }
+        PlaybackAction.PLAY_PAUSE -> actions.hasAny(
+            PlaybackState.ACTION_PLAY or
+                PlaybackState.ACTION_PAUSE or
+                PlaybackState.ACTION_PLAY_PAUSE,
+        )
         PlaybackAction.STOP -> actions.hasAny(PlaybackState.ACTION_STOP)
         PlaybackAction.PREVIOUS -> actions.hasAny(PlaybackState.ACTION_SKIP_TO_PREVIOUS)
         PlaybackAction.NEXT -> actions.hasAny(PlaybackState.ACTION_SKIP_TO_NEXT)
@@ -65,6 +88,10 @@ data class MediaSessionInfo(
 }
 
 object MediaSessionAccess {
+    private const val RESTORE_GUARD_DURATION_MS = 2_000L
+    private val restoreHandler = Handler(Looper.getMainLooper())
+    private val restoreGuards = ConcurrentHashMap<String, RestoreGuard>()
+
     fun hasNotificationAccess(context: Context): Boolean =
         NotificationManagerCompat.getEnabledListenerPackages(context).contains(context.packageName)
 
@@ -81,6 +108,9 @@ object MediaSessionAccess {
 
     fun sessions(context: Context): List<MediaSessionInfo> =
         activeControllers(context).map { it.toInfo(context) }
+
+    internal fun displayedAsPlaying(sessionId: String, playbackState: Int): Boolean =
+        displayedAsPlaying(playbackState, restoreGuards[sessionId]?.transport)
 
     fun chooseSession(
         sessions: List<MediaSessionInfo>,
@@ -107,33 +137,87 @@ object MediaSessionAccess {
         return true
     }
 
+    @Synchronized
     fun perform(session: MediaSessionInfo, action: PlaybackAction) {
+        clearRestoreGuard(session.sessionId)
         if (!session.supports(action)) return
         val controls = session.controller.transportControls
+        val liveState = session.controller.playbackState?.state ?: session.playbackState
         when (action) {
-            PlaybackAction.PLAY_PAUSE -> if (session.isPlaying) controls.pause() else controls.play()
+            PlaybackAction.PLAY_PAUSE -> if (isPlaybackActive(liveState)) controls.pause() else controls.play()
             PlaybackAction.STOP -> controls.stop()
             PlaybackAction.PREVIOUS,
             PlaybackAction.NEXT -> {
-                val originalState = session.playbackState
+                val restoreTransport = restoreTransportFor(liveState)
+                if (restoreTransport != RestoreTransport.PLAY) {
+                    installRestoreGuard(session, restoreTransport)
+                }
                 if (action == PlaybackAction.PREVIOUS) controls.skipToPrevious()
                 else controls.skipToNext()
-                restorePlaybackState(session.controller, originalState)
+                restorePlaybackState(session.controller, restoreTransport)
             }
         }
     }
 
     private fun restorePlaybackState(
         controller: MediaController,
-        originalState: Int,
+        transport: RestoreTransport,
     ) {
         val controls = controller.transportControls
-        when (restoreTransportFor(originalState)) {
+        when (transport) {
             RestoreTransport.PLAY -> controls.play()
             RestoreTransport.PAUSE -> controls.pause()
             RestoreTransport.STOP -> controls.stop()
         }
     }
+
+    private fun installRestoreGuard(
+        session: MediaSessionInfo,
+        transport: RestoreTransport,
+    ) {
+        // Some players autoplay only after an asynchronous skip has finished loading.
+        val sessionId = session.sessionId
+        val controller = session.controller
+        lateinit var callback: MediaController.Callback
+        val timeout = Runnable { clearRestoreGuard(sessionId, callback) }
+        callback = object : MediaController.Callback() {
+            override fun onPlaybackStateChanged(state: PlaybackState?) {
+                synchronized(MediaSessionAccess) {
+                    if (restoreGuards[sessionId]?.callback !== this) return
+                    if (state != null && shouldRestoreAfterSkip(transport, state.state)) {
+                        restorePlaybackState(controller, transport)
+                    }
+                }
+            }
+
+            override fun onSessionDestroyed() {
+                clearRestoreGuard(sessionId, this)
+            }
+        }
+        restoreGuards[sessionId] = RestoreGuard(controller, callback, timeout, transport)
+        controller.registerCallback(callback, restoreHandler)
+        restoreHandler.postDelayed(timeout, RESTORE_GUARD_DURATION_MS)
+    }
+
+    @Synchronized
+    private fun clearRestoreGuard(
+        sessionId: String,
+        expectedCallback: MediaController.Callback? = null,
+    ) {
+        val guard = restoreGuards[sessionId] ?: return
+        if (expectedCallback != null && guard.callback !== expectedCallback) return
+        if (restoreGuards.remove(sessionId, guard)) {
+            guard.controller.unregisterCallback(guard.callback)
+            restoreHandler.removeCallbacks(guard.timeout)
+        }
+    }
+
+    private data class RestoreGuard(
+        val controller: MediaController,
+        val callback: MediaController.Callback,
+        val timeout: Runnable,
+        val transport: RestoreTransport,
+    )
 }
 
 internal data class SessionCandidate(
@@ -171,10 +255,11 @@ private fun MediaController.toInfo(context: Context): MediaSessionInfo {
         ?: metadata?.getString(MediaMetadata.METADATA_KEY_ALBUM_ARTIST)
         ?: metadata?.getString(MediaMetadata.METADATA_KEY_DISPLAY_SUBTITLE)
         ?: appName
+    val sessionId = "$packageName:${sessionToken.hashCode()}"
 
     return MediaSessionInfo(
         controller = this,
-        sessionId = "$packageName:${sessionToken.hashCode()}",
+        sessionId = sessionId,
         packageName = packageName,
         appName = appName,
         appIcon = appIcon,
@@ -182,7 +267,10 @@ private fun MediaController.toInfo(context: Context): MediaSessionInfo {
         title = title,
         artist = artist,
         hasMetadata = metadata != null,
-        isPlaying = state?.state == PlaybackState.STATE_PLAYING,
+        isPlaying = MediaSessionAccess.displayedAsPlaying(
+            sessionId,
+            state?.state ?: PlaybackState.STATE_NONE,
+        ),
         playbackState = state?.state ?: PlaybackState.STATE_NONE,
         actions = state?.actions ?: 0L,
     )
