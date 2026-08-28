@@ -11,6 +11,16 @@
 - 可能包含尚未發現的錯誤或裝置相容性問題。
 - 不保證可直接升級到未來正式版本。
 
+## APK 資訊
+
+- 檔案：`app-debug.apk`
+- Application ID：`com.simpleplay.app`
+- Version name：`0.1.0-debug`
+- Version code：`1`
+- 最低版本：Android 12 / API 31
+- 簽章：Android Debug
+- SHA-256：`63B63FCB815E5E3274C1D302046E738A9813ACDA5C70F929E15D495B7D116648`
+
 ## 目前功能
 
 - 控制其他 App 的 MediaSession。
