@@ -3,7 +3,7 @@
 「簡單播放」是一款 Android 媒體控制器，專注於簡單、直覺的播放操作。它會連接目前作用中的 Android `MediaSession`，讓使用者控制其他音樂、Podcast 或影音 App。
 
 > [!WARNING]
-> 目前提供的是 **Debug 測試版本**，不是正式發布版本。Debug APK 僅供功能測試，可能包含未完成的功能或相容性問題，請勿用於正式環境。
+> 目前提供的是 **Prerelease 測試版本**，不是正式發布版本。Prerelease APK 已啟用 R8 壓縮，但仍使用 Android Debug 金鑰簽署，僅供功能測試，請勿用於正式環境。
 
 ## 功能
 
@@ -23,15 +23,15 @@
 - 必須授予「通知存取權」，App 才能取得其他播放器公開的 MediaSession。
 - 實際可用的控制功能由來源播放器決定；來源 App 未提供的操作會停用。
 
-## 安裝 Debug APK
+## 安裝 Prerelease APK
 
 1. 前往 [GitHub Releases](https://github.com/mark216tw/simple-play-android/releases)。
-2. 開啟標示為 **Pre-release** 的 Debug 版本。
-3. 下載 `app-debug.apk`。
+2. 開啟標示為 **Pre-release** 的最新版本。
+3. 下載 `app-prerelease.apk`。
 4. 在 Android 裝置允許瀏覽器或檔案管理員安裝未知來源應用程式。
 5. 安裝後開啟「簡單播放」，依畫面指示授予通知存取權。
 
-Debug APK 使用開發用簽章，未來正式版不保證能直接覆蓋安裝。
+Prerelease APK 已啟用 R8 程式碼與資源壓縮，並使用 Android Debug 金鑰簽署。未來正式版不保證能直接覆蓋安裝。
 
 ## 使用方式
 
@@ -74,16 +74,16 @@ Debug APK 使用開發用簽章，未來正式版不保證能直接覆蓋安裝�
 - RemoteViews App Widget
 - Preferences DataStore
 
-建置 Debug APK：
+建置 Prerelease APK：
 
 ```shell
-./gradlew assembleDebug
+./gradlew assemblePrerelease
 ```
 
 Windows：
 
 ```powershell
-.\gradlew.bat assembleDebug
+.\gradlew.bat assemblePrerelease
 ```
 
 完整環境與驗證方式請參閱[開發文件](docs/DEVELOPMENT.md)。

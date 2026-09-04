@@ -22,6 +22,19 @@ android {
         debug {
             versionNameSuffix = "-debug"
         }
+        create("prerelease") {
+            initWith(getByName("release"))
+            versionNameSuffix = "-prerelease"
+            isDebuggable = false
+            isMinifyEnabled = true
+            isShrinkResources = true
+            signingConfig = signingConfigs.getByName("debug")
+            matchingFallbacks += listOf("release")
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(

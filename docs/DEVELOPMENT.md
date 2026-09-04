@@ -22,44 +22,46 @@
 
 ## 建置
 
+建置使用 Debug 金鑰簽署、啟用 R8 程式碼壓縮與資源縮減的 Prerelease APK。
+
 Windows：
 
 ```powershell
-.\gradlew.bat assembleDebug
+.\gradlew.bat assemblePrerelease
 ```
 
 macOS 或 Linux：
 
 ```shell
-./gradlew assembleDebug
+./gradlew assemblePrerelease
 ```
 
 輸出位置：
 
 ```text
-app/build/outputs/apk/debug/app-debug.apk
+app/build/outputs/apk/prerelease/app-prerelease.apk
 ```
 
-這個 APK 是使用開發簽章產生的 Debug 版本，不適合正式發布。
+`prerelease` Build Type 不開放除錯，使用 Android Debug 金鑰簽署，並設定 `isMinifyEnabled = true` 與 `isShrinkResources = true`。這是壓縮測試發行版本，不適合正式發布。
 
 ## 驗證
 
 執行單元測試：
 
 ```powershell
-.\gradlew.bat testDebugUnitTest
+.\gradlew.bat testPrereleaseUnitTest
 ```
 
 執行 Android Lint：
 
 ```powershell
-.\gradlew.bat lintDebug
+.\gradlew.bat lintPrerelease
 ```
 
-執行完整 Debug 驗證：
+執行完整 Prerelease 驗證：
 
 ```powershell
-.\gradlew.bat testDebugUnitTest lintDebug assembleDebug
+.\gradlew.bat testPrereleaseUnitTest lintPrerelease assemblePrerelease
 ```
 
 ## 架構
